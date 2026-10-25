@@ -1,0 +1,38 @@
+# Runs the pipeline every day. The pipeline only QUEUES proposals; nothing is
+# written to the CRM until a reviewer approves it in the app.
+name: bellhaven-daily-sync
+
+on:
+  schedule:
+    - cron: "17 10 * * *"     # 10:17 UTC = 6:17 AM Toronto (EDT), before the team starts
+  workflow_dispatch: {}       # manual "Run workflow" button
+
+concurrency: bellhaven-sync   # never two runs at once
+
+permissions:
+  contents: write             # to save the decision store back to the repo
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Tests
+        run: python -m unittest discover tests
+      - name: Build proposals
+        run: python pipeline.py
+        env:
+          BH_TOKEN: ${{ secrets.BH_TOKEN }}
+      # Keeps the decision history between runs so decided items are never
+      # re-proposed. In production this would be a shared database instead.
+      - name: Save state
+        run: |
+          git config user.name "bellhaven-sync-bot"
+          git config user.email "bellhaven-sync-bot@users.noreply.github.com"
+          git add -f state/bellhaven_sync.db
+          git diff --cached --quiet || git commit -m "Daily sync state"
+          git push
